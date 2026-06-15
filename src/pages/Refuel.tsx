@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
-import { X, Plus, Trash2, Fuel, AlertTriangle, Gauge, DollarSign } from 'lucide-react'
+import { X, Plus, Trash2, Fuel, AlertTriangle, Gauge, DollarSign, Car } from 'lucide-react'
 import { useStore } from '@/store/useStore'
+import VehicleSelector from '@/components/VehicleSelector'
 import { cn } from '@/lib/utils'
 
 interface RefuelFormData {
@@ -97,28 +98,31 @@ export default function Refuel() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold text-zinc-100">加油记录</h2>
           <p className="mt-1 text-sm text-zinc-500">
             {activeVehicle
-              ? `当前车辆：${activeVehicle.brand} ${activeVehicle.plateNumber}`
-              : '请选择一辆车'}
+              ? `为车辆记录每次加油，自动计算油耗和成本`
+              : '请选择一辆车开始记录'}
           </p>
         </div>
-        <button
-          onClick={openAdd}
-          disabled={!activeVehicleId}
-          className={cn(
-            'flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all',
-            activeVehicleId
-              ? 'bg-amber-500 text-black hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/20'
-              : 'cursor-not-allowed bg-zinc-800 text-zinc-500'
-          )}
-        >
-          <Plus className="h-4 w-4" />
-          添加记录
-        </button>
+        <div className="flex items-center gap-3">
+          <VehicleSelector />
+          <button
+            onClick={openAdd}
+            disabled={!activeVehicleId}
+            className={cn(
+              'flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all whitespace-nowrap',
+              activeVehicleId
+                ? 'bg-amber-500 text-black hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/20'
+                : 'cursor-not-allowed bg-zinc-800 text-zinc-500'
+            )}
+          >
+            <Plus className="h-4 w-4" />
+            添加记录
+          </button>
+        </div>
       </div>
 
       {records.length === 0 ? (
@@ -232,7 +236,7 @@ export default function Refuel() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="mx-4 w-full max-w-md rounded-2xl border border-zinc-800 bg-[#1a1a2e] p-6">
-            <div className="mb-6 flex items-center justify-between">
+            <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-zinc-100">添加加油记录</h3>
               <button
                 onClick={() => setShowModal(false)}
@@ -241,6 +245,23 @@ export default function Refuel() {
                 <X className="h-4 w-4" />
               </button>
             </div>
+
+            {activeVehicle && (
+              <div className="mb-5 flex items-center gap-3 rounded-xl border border-zinc-700/30 bg-zinc-800/30 px-4 py-3">
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-lg"
+                  style={{ backgroundColor: activeVehicle.color + '20' }}
+                >
+                  <Car className="h-5 w-5" style={{ color: activeVehicle.color }} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-zinc-200">{activeVehicle.brand}</p>
+                  <p className="font-data text-xs text-zinc-500">
+                    {activeVehicle.plateNumber} · {activeVehicle.displacement}L · {activeVehicle.fuelType}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {prevMileage > 0 && (
               <div className="mb-4 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3.5 py-2.5">

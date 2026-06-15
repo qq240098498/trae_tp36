@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   LineChart,
   Line,
@@ -9,10 +9,28 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   Cell,
+  Legend,
+  BarChart,
+  Bar,
 } from 'recharts'
-import { BarChart3, TrendingDown, TrendingUp, Fuel, Gauge, AlertTriangle, Route, Coins } from 'lucide-react'
+import {
+  BarChart3,
+  TrendingDown,
+  TrendingUp,
+  Fuel,
+  Gauge,
+  AlertTriangle,
+  Route,
+  Coins,
+  Car,
+  Scale,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react'
 import { useStore } from '@/store/useStore'
+import VehicleSelector from '@/components/VehicleSelector'
 import { cn } from '@/lib/utils'
+import type { Vehicle, RefuelRecord } from '@/types'
 
 interface CustomDotProps {
   cx?: number
@@ -100,10 +118,51 @@ function CustomTooltip({ active, payload }: CustomTooltipProps) {
   )
 }
 
+interface VehicleStats {
+  vehicle: Vehicle
+  avgConsumption: number
+  minConsumption: number
+  maxConsumption: number
+  totalVolume: number
+  totalCost: number
+  totalDistance: number
+  recordCount: number
+  anomalyCount: number
+  avgCostPerKm: number
+}
+
+function calcVehicleStats(vehicle: Vehicle, records: RefuelRecord[]): VehicleStats | null {
+  if (records.length === 0) return null
+  const withConsumption = records.filter((r) => r.consumption > 0)
+  if (withConsumption.length === 0) return null
+
+  const totalVolume = records.reduce((s, r) => s + r.volume, 0)
+  const totalCost = records.reduce((s, r) => s + r.totalCost, 0)
+  const maxMileage = Math.max(...records.map((r) => r.mileage))
+  const minMileage = Math.min(...records.map((r) => r.mileage))
+  const totalDistance = maxMileage - minMileage
+  const avgConsumption = withConsumption.reduce((s, r) => s + r.consumption, 0) / withConsumption.length
+  const avgCostPerKm = withConsumption.reduce((s, r) => s + r.costPerKm, 0) / withConsumption.length
+
+  return {
+    vehicle,
+    avgConsumption,
+    minConsumption: Math.min(...withConsumption.map((r) => r.consumption)),
+    maxConsumption: Math.max(...withConsumption.map((r) => r.consumption)),
+    totalVolume,
+    totalCost,
+    totalDistance,
+    recordCount: records.length,
+    anomalyCount: records.filter((r) => r.isAnomaly).length,
+    avgCostPerKm,
+  }
+}
+
 export default function Analysis() {
-  const { activeVehicleId, vehicles, getActiveVehicle, getRecordsForVehicle } = useStore()
+  const { vehicles, activeVehicleId, getActiveVehicle, getRecordsForVehicle } = useStore()
   const activeVehicle = getActiveVehicle()
   const records = activeVehicleId ? getRecordsForVehicle(activeVehicleId) : []
+  const [showComparison, setShowComparison] = useState(false)
 
   const chartData = useMemo(() => {
     return [...records]
@@ -117,27 +176,25 @@ export default function Analysis() {
   }, [chartData])
 
   const stats = useMemo(() => {
-    if (records.length === 0) return null
-    const withConsumption = records.filter((r) => r.consumption > 0)
-    const totalVolume = records.reduce((s, r) => s + r.volume, 0)
-    const totalCost = records.reduce((s, r) => s + r.totalCost, 0)
-    const maxMileage = Math.max(...records.map((r) => r.mileage))
-    const minMileage = Math.min(...records.map((r) => r.mileage))
-    const totalDistance = maxMileage - minMileage
+    if (!activeVehicle) return null
+    return calcVehicleStats(activeVehicle, records)
+  }, [activeVehicle, records])
 
-    return {
-      avgConsumption: withConsumption.length > 0
-        ? withConsumption.reduce((s, r) => s + r.consumption, 0) / withConsumption.length
-        : 0,
-      minConsumption: withConsumption.length > 0 ? Math.min(...withConsumption.map((r) => r.consumption)) : 0,
-      maxConsumption: withConsumption.length > 0 ? Math.max(...withConsumption.map((r) => r.consumption)) : 0,
-      totalVolume,
-      totalCost,
-      totalDistance,
-      recordCount: records.length,
-      anomalyCount: records.filter((r) => r.isAnomaly).length,
-    }
-  }, [records])
+  const allVehicleStats = useMemo(() => {
+    return vehicles
+      .map((v) => calcVehicleStats(v, getRecordsForVehicle(v.id)))
+      .filter((s): s is VehicleStats => s !== null)
+      .sort((a, b) => a.avgConsumption - b.avgConsumption)
+  }, [vehicles, getRecordsForVehicle])
+
+  const comparisonBarData = useMemo(() => {
+    return allVehicleStats.map((s) => ({
+      name: s.vehicle.brand,
+      shortName: s.vehicle.plateNumber,
+      '平均油耗': parseFloat(s.avgConsumption.toFixed(1)),
+      color: s.vehicle.color,
+    }))
+  }, [allVehicleStats])
 
   if (vehicles.length === 0) {
     return (
@@ -164,13 +221,16 @@ export default function Analysis() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold text-zinc-100">油耗分析</h2>
-        <p className="mt-1 text-sm text-zinc-500">
-          {activeVehicle
-            ? `${activeVehicle.brand} ${activeVehicle.plateNumber} — 油耗趋势与统计数据`
-            : '选择车辆查看分析'}
-        </p>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-100">油耗分析</h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            {activeVehicle
+              ? `${activeVehicle.brand} ${activeVehicle.plateNumber} — 油耗趋势与统计数据`
+              : '选择车辆查看分析'}
+          </p>
+        </div>
+        <VehicleSelector />
       </div>
 
       {stats && (
@@ -378,6 +438,146 @@ export default function Analysis() {
           </div>
         )}
       </div>
+
+      {allVehicleStats.length > 1 && (
+        <div className="mt-6">
+          <button
+            onClick={() => setShowComparison(!showComparison)}
+            className="flex w-full items-center justify-between rounded-xl border border-zinc-800/50 bg-zinc-900/50 px-5 py-4 transition-all hover:border-zinc-700/50 hover:bg-zinc-900"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-500/10">
+                <Scale className="h-4 w-4 text-purple-400" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-sm font-semibold text-zinc-200">多车辆对比</h3>
+                <p className="text-xs text-zinc-500">
+                  共 {allVehicleStats.length} 辆车参与对比
+                </p>
+              </div>
+            </div>
+            {showComparison ? (
+              <ChevronUp className="h-5 w-5 text-zinc-400" />
+            ) : (
+              <ChevronDown className="h-5 w-5 text-zinc-400" />
+            )}
+          </button>
+
+          {showComparison && (
+            <div className="mt-4 space-y-4">
+              <div className="rounded-xl border border-zinc-800/50 bg-zinc-900/50 p-5">
+                <h4 className="mb-4 text-sm font-medium text-zinc-300">平均油耗对比 (L/100km)</h4>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={comparisonBarData}
+                      layout="vertical"
+                      margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                      <XAxis
+                        type="number"
+                        tick={{ fill: '#71717a', fontSize: 11 }}
+                        tickLine={false}
+                        axisLine={{ stroke: '#1e293b' }}
+                      />
+                      <YAxis
+                        dataKey="name"
+                        type="category"
+                        tick={{ fill: '#a1a1aa', fontSize: 11 }}
+                        tickLine={false}
+                        axisLine={false}
+                        width={80}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1a1a2e',
+                          border: '1px solid #334155',
+                          borderRadius: '12px',
+                        }}
+                        labelStyle={{ color: '#a1a1aa' }}
+                        itemStyle={{ color: '#f59e0b' }}
+                        formatter={(value: number) => [`${value} L/100km`, '平均油耗']}
+                      />
+                      <Bar dataKey="平均油耗" radius={[0, 6, 6, 0]} barSize={24}>
+                        {comparisonBarData.map((entry, index) => (
+                          <Cell key={index} fill={entry.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-zinc-800/50 bg-zinc-900/50">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-zinc-800/50">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">车辆</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">平均油耗</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">每公里成本</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">总里程</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">总花费</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allVehicleStats.map((s, i) => (
+                      <tr
+                        key={s.vehicle.id}
+                        className={cn(
+                          'border-b border-zinc-800/30 last:border-0',
+                          s.vehicle.id === activeVehicleId && 'bg-amber-500/5'
+                        )}
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className="flex h-7 w-7 items-center justify-center rounded-md"
+                              style={{ backgroundColor: s.vehicle.color + '20' }}
+                            >
+                              <Car className="h-3.5 w-3.5" style={{ color: s.vehicle.color }} />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-zinc-200">{s.vehicle.brand}</p>
+                              <p className="font-data text-[10px] text-zinc-500">
+                                {s.vehicle.plateNumber} · {s.vehicle.displacement}L
+                              </p>
+                            </div>
+                            {i === 0 && (
+                              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                                最省油
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span
+                            className={cn(
+                              'font-data text-sm font-bold',
+                              i === 0 ? 'text-emerald-400' : 'text-zinc-300'
+                            )}
+                          >
+                            {s.avgConsumption.toFixed(1)} L
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-data text-sm text-zinc-300">
+                          {s.avgCostPerKm.toFixed(2)} 元
+                        </td>
+                        <td className="px-4 py-3 text-right font-data text-sm text-zinc-300">
+                          {s.totalDistance.toLocaleString()} km
+                        </td>
+                        <td className="px-4 py-3 text-right font-data text-sm text-zinc-300">
+                          {s.totalCost.toFixed(0)} 元
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
