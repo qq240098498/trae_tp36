@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Car, Fuel, BarChart3, Menu, X } from 'lucide-react'
+import { Car, Fuel, BarChart3, Wrench, Menu, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
   { path: '/vehicles', label: '车辆管理', icon: Car },
   { path: '/refuel', label: '加油记录', icon: Fuel },
+  { path: '/maintenance', label: '保养记录', icon: Wrench },
   { path: '/analysis', label: '油耗分析', icon: BarChart3 },
 ]
 

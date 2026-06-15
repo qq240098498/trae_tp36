@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Vehicle, RefuelRecord } from '@/types'
+import type { Vehicle, RefuelRecord, MaintenanceRecord, MaintenanceReminder } from '@/types'
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -25,6 +25,7 @@ function calculateAnomalies(records: RefuelRecord[]): RefuelRecord[] {
 interface AppState {
   vehicles: Vehicle[]
   refuelRecords: RefuelRecord[]
+  maintenanceRecords: MaintenanceRecord[]
   activeVehicleId: string | null
 
   setActiveVehicle: (id: string) => void
@@ -35,8 +36,15 @@ interface AppState {
   addRefuelRecord: (record: Omit<RefuelRecord, 'id' | 'consumption' | 'costPerKm' | 'isAnomaly' | 'anomalyPercentage'>) => void
   deleteRefuelRecord: (id: string) => void
 
+  addMaintenanceRecord: (record: Omit<MaintenanceRecord, 'id' | 'createdAt'>) => void
+  updateMaintenanceRecord: (id: string, data: Partial<Omit<MaintenanceRecord, 'id' | 'vehicleId' | 'createdAt'>>) => void
+  deleteMaintenanceRecord: (id: string) => void
+
   getActiveVehicle: () => Vehicle | undefined
   getRecordsForVehicle: (vehicleId: string) => RefuelRecord[]
+  getMaintenanceRecordsForVehicle: (vehicleId: string) => MaintenanceRecord[]
+  getCurrentMileage: (vehicleId: string) => number
+  getMaintenanceReminders: () => MaintenanceReminder[]
 }
 
 export const useStore = create<AppState>()(
@@ -44,6 +52,7 @@ export const useStore = create<AppState>()(
     (set, get) => ({
       vehicles: [],
       refuelRecords: [],
+      maintenanceRecords: [],
       activeVehicleId: null,
 
       setActiveVehicle: (id) => set({ activeVehicleId: id }),
@@ -73,11 +82,12 @@ export const useStore = create<AppState>()(
         set((state) => {
           const vehicles = state.vehicles.filter((v) => v.id !== id)
           const refuelRecords = state.refuelRecords.filter((r) => r.vehicleId !== id)
+          const maintenanceRecords = state.maintenanceRecords.filter((r) => r.vehicleId !== id)
           const activeVehicleId =
             state.activeVehicleId === id
               ? vehicles[0]?.id || null
               : state.activeVehicleId
-          return { vehicles, refuelRecords, activeVehicleId }
+          return { vehicles, refuelRecords, maintenanceRecords, activeVehicleId }
         })
       },
 
@@ -124,6 +134,31 @@ export const useStore = create<AppState>()(
         })
       },
 
+      addMaintenanceRecord: (record) => {
+        const newRecord: MaintenanceRecord = {
+          ...record,
+          id: generateId(),
+          createdAt: Date.now(),
+        }
+        set((state) => ({
+          maintenanceRecords: [...state.maintenanceRecords, newRecord],
+        }))
+      },
+
+      updateMaintenanceRecord: (id, data) => {
+        set((state) => ({
+          maintenanceRecords: state.maintenanceRecords.map((r) =>
+            r.id === id ? { ...r, ...data } : r
+          ),
+        }))
+      },
+
+      deleteMaintenanceRecord: (id) => {
+        set((state) => ({
+          maintenanceRecords: state.maintenanceRecords.filter((r) => r.id !== id),
+        }))
+      },
+
       getActiveVehicle: () => {
         const state = get()
         return state.vehicles.find((v) => v.id === state.activeVehicleId)
@@ -133,6 +168,74 @@ export const useStore = create<AppState>()(
         return get()
           .refuelRecords.filter((r) => r.vehicleId === vehicleId)
           .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      },
+
+      getMaintenanceRecordsForVehicle: (vehicleId) => {
+        return get()
+          .maintenanceRecords.filter((r) => r.vehicleId === vehicleId)
+          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      },
+
+      getCurrentMileage: (vehicleId) => {
+        const state = get()
+        const refuelRecords = state.refuelRecords.filter((r) => r.vehicleId === vehicleId)
+        const maintenanceRecords = state.maintenanceRecords.filter((r) => r.vehicleId === vehicleId)
+        
+        let maxMileage = 0
+        
+        refuelRecords.forEach((r) => {
+          if (r.mileage > maxMileage) maxMileage = r.mileage
+        })
+        maintenanceRecords.forEach((r) => {
+          if (r.currentMileage > maxMileage) maxMileage = r.currentMileage
+        })
+        
+        return maxMileage
+      },
+
+      getMaintenanceReminders: () => {
+        const state = get()
+        const reminders: MaintenanceReminder[] = []
+        const reminderKmThreshold = 500
+        const reminderDaysThreshold = 15
+
+        state.vehicles.forEach((vehicle) => {
+          const currentMileage = state.getCurrentMileage(vehicle.id)
+          const records = state.getMaintenanceRecordsForVehicle(vehicle.id)
+          
+          records.forEach((record) => {
+            if (record.nextMaintenanceMileage && currentMileage > 0) {
+              const remainingKm = record.nextMaintenanceMileage - currentMileage
+              if (remainingKm <= reminderKmThreshold && remainingKm > 0) {
+                reminders.push({
+                  vehicleId: vehicle.id,
+                  type: 'mileage',
+                  remainingKm,
+                  maintenanceId: record.id,
+                })
+              }
+            }
+            
+            if (record.nextMaintenanceDate) {
+              const nextDate = new Date(record.nextMaintenanceDate)
+              const today = new Date()
+              today.setHours(0, 0, 0, 0)
+              const diffTime = nextDate.getTime() - today.getTime()
+              const remainingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+              
+              if (remainingDays <= reminderDaysThreshold && remainingDays >= 0) {
+                reminders.push({
+                  vehicleId: vehicle.id,
+                  type: 'date',
+                  remainingDays,
+                  maintenanceId: record.id,
+                })
+              }
+            }
+          })
+        })
+
+        return reminders
       },
     }),
     {
