@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Vehicle, RefuelRecord, MaintenanceRecord, MaintenanceReminder } from '@/types'
+import type { Vehicle, RefuelRecord, MaintenanceRecord, MaintenanceReminder, PriceAlertSetting, GasStationAvgPrice, WeekdayPrice } from '@/types'
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -26,6 +26,7 @@ interface AppState {
   vehicles: Vehicle[]
   refuelRecords: RefuelRecord[]
   maintenanceRecords: MaintenanceRecord[]
+  priceAlertSettings: PriceAlertSetting[]
   activeVehicleId: string | null
 
   setActiveVehicle: (id: string) => void
@@ -40,11 +41,19 @@ interface AppState {
   updateMaintenanceRecord: (id: string, data: Partial<Omit<MaintenanceRecord, 'id' | 'vehicleId' | 'createdAt'>>) => void
   deleteMaintenanceRecord: (id: string) => void
 
+  addPriceAlert: (alert: Omit<PriceAlertSetting, 'id' | 'createdAt'>) => void
+  updatePriceAlert: (id: string, data: Partial<Omit<PriceAlertSetting, 'id' | 'vehicleId' | 'createdAt'>>) => void
+  deletePriceAlert: (id: string) => void
+
   getActiveVehicle: () => Vehicle | undefined
   getRecordsForVehicle: (vehicleId: string) => RefuelRecord[]
   getMaintenanceRecordsForVehicle: (vehicleId: string) => MaintenanceRecord[]
   getCurrentMileage: (vehicleId: string) => number
   getMaintenanceReminders: () => MaintenanceReminder[]
+  getGasStationAvgPrices: (vehicleId?: string) => GasStationAvgPrice[]
+  getWeekdayPrices: (vehicleId?: string) => WeekdayPrice[]
+  getPriceAlerts: () => PriceAlertSetting[]
+  checkPriceAlerts: (record: RefuelRecord) => PriceAlertSetting[]
 }
 
 export const useStore = create<AppState>()(
@@ -53,6 +62,7 @@ export const useStore = create<AppState>()(
       vehicles: [],
       refuelRecords: [],
       maintenanceRecords: [],
+      priceAlertSettings: [],
       activeVehicleId: null,
 
       setActiveVehicle: (id) => set({ activeVehicleId: id }),
@@ -159,6 +169,31 @@ export const useStore = create<AppState>()(
         }))
       },
 
+      addPriceAlert: (alert) => {
+        const newAlert: PriceAlertSetting = {
+          ...alert,
+          id: generateId(),
+          createdAt: Date.now(),
+        }
+        set((state) => ({
+          priceAlertSettings: [...state.priceAlertSettings, newAlert],
+        }))
+      },
+
+      updatePriceAlert: (id, data) => {
+        set((state) => ({
+          priceAlertSettings: state.priceAlertSettings.map((a) =>
+            a.id === id ? { ...a, ...data } : a
+          ),
+        }))
+      },
+
+      deletePriceAlert: (id) => {
+        set((state) => ({
+          priceAlertSettings: state.priceAlertSettings.filter((a) => a.id !== id),
+        }))
+      },
+
       getActiveVehicle: () => {
         const state = get()
         return state.vehicles.find((v) => v.id === state.activeVehicleId)
@@ -236,6 +271,99 @@ export const useStore = create<AppState>()(
         })
 
         return reminders
+      },
+
+      getGasStationAvgPrices: (vehicleId) => {
+        const state = get()
+        let records = state.refuelRecords
+        
+        if (vehicleId) {
+          records = records.filter((r) => r.vehicleId === vehicleId)
+        }
+
+        records = records.filter((r) => r.gasStation && r.gasStation.trim() !== '')
+
+        const stationMap = new Map<string, { prices: number[]; count: number }>()
+
+        records.forEach((record) => {
+          const station = record.gasStation
+          if (!stationMap.has(station)) {
+            stationMap.set(station, { prices: [], count: 0 })
+          }
+          const data = stationMap.get(station)!
+          data.prices.push(record.unitPrice)
+          data.count++
+        })
+
+        const result: GasStationAvgPrice[] = []
+        stationMap.forEach((data, station) => {
+          result.push({
+            gasStation: station,
+            avgPrice: data.prices.reduce((a, b) => a + b, 0) / data.prices.length,
+            recordCount: data.count,
+            minPrice: Math.min(...data.prices),
+            maxPrice: Math.max(...data.prices),
+          })
+        })
+
+        return result.sort((a, b) => a.avgPrice - b.avgPrice)
+      },
+
+      getWeekdayPrices: (vehicleId) => {
+        const state = get()
+        let records = state.refuelRecords
+        
+        if (vehicleId) {
+          records = records.filter((r) => r.vehicleId === vehicleId)
+        }
+
+        const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+        const weekdayMap = new Map<number, { prices: number[]; count: number }>()
+
+        for (let i = 0; i < 7; i++) {
+          weekdayMap.set(i, { prices: [], count: 0 })
+        }
+
+        records.forEach((record) => {
+          const date = new Date(record.date)
+          const weekday = date.getDay()
+          const data = weekdayMap.get(weekday)!
+          data.prices.push(record.unitPrice)
+          data.count++
+        })
+
+        const result: WeekdayPrice[] = []
+        weekdayMap.forEach((data, weekday) => {
+          if (data.count > 0) {
+            result.push({
+              weekday,
+              weekdayName: weekdayNames[weekday],
+              avgPrice: data.prices.reduce((a, b) => a + b, 0) / data.prices.length,
+              recordCount: data.count,
+            })
+          }
+        })
+
+        return result.sort((a, b) => a.avgPrice - b.avgPrice)
+      },
+
+      getPriceAlerts: () => {
+        return get().priceAlertSettings
+      },
+
+      checkPriceAlerts: (record) => {
+        const state = get()
+        const triggeredAlerts: PriceAlertSetting[] = []
+
+        state.priceAlertSettings.forEach((alert) => {
+          if (!alert.enabled) return
+          if (alert.gasStation && alert.gasStation !== record.gasStation) return
+          if (record.unitPrice <= alert.threshold) {
+            triggeredAlerts.push(alert)
+          }
+        })
+
+        return triggeredAlerts
       },
     }),
     {

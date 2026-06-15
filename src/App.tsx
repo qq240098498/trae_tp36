@@ -4,6 +4,7 @@ import Vehicles from "@/pages/Vehicles";
 import Refuel from "@/pages/Refuel";
 import Maintenance from "@/pages/Maintenance";
 import Analysis from "@/pages/Analysis";
+import FuelSaving from "@/pages/FuelSaving";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/refuel" element={<Refuel />} />
           <Route path="/maintenance" element={<Maintenance />} />
           <Route path="/analysis" element={<Analysis />} />
+          <Route path="/fuel-saving" element={<FuelSaving />} />
         </Routes>
       </Layout>
     </Router>

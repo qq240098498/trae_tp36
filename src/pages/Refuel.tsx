@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react'
-import { X, Plus, Trash2, Fuel, AlertTriangle, Gauge, DollarSign, Car } from 'lucide-react'
+import { useState, useMemo, useEffect } from 'react'
+import { X, Plus, Trash2, Fuel, AlertTriangle, Gauge, DollarSign, Car, Bell } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import VehicleSelector from '@/components/VehicleSelector'
 import { cn } from '@/lib/utils'
+import type { PriceAlertSetting } from '@/types'
 
 interface RefuelFormData {
   date: string
@@ -10,6 +11,7 @@ interface RefuelFormData {
   unitPrice: string
   totalCost: string
   mileage: string
+  gasStation: string
 }
 
 const defaultForm: RefuelFormData = {
@@ -18,21 +20,52 @@ const defaultForm: RefuelFormData = {
   unitPrice: '',
   totalCost: '',
   mileage: '',
+  gasStation: '',
 }
 
 export default function Refuel() {
-  const { activeVehicleId, vehicles, getActiveVehicle, getRecordsForVehicle, addRefuelRecord, deleteRefuelRecord } = useStore()
+  const { activeVehicleId, vehicles, getActiveVehicle, getRecordsForVehicle, addRefuelRecord, deleteRefuelRecord, checkPriceAlerts, getPriceAlerts } = useStore()
   const activeVehicle = getActiveVehicle()
   const records = activeVehicleId ? getRecordsForVehicle(activeVehicleId) : []
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<RefuelFormData>(defaultForm)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
+  const [triggeredAlerts, setTriggeredAlerts] = useState<PriceAlertSetting[]>([])
+  const [showAlertToast, setShowAlertToast] = useState(false)
 
   const prevMileage = useMemo(() => {
     if (!activeVehicleId) return 0
     const sorted = [...records].sort((a, b) => a.mileage - b.mileage)
     return sorted.length > 0 ? sorted[sorted.length - 1].mileage : 0
   }, [records, activeVehicleId])
+
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission)
+    }
+  }, [])
+
+  const requestNotificationPermission = async () => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      const permission = await Notification.requestPermission()
+      setNotificationPermission(permission)
+    }
+  }
+
+  const sendPriceAlertNotification = (alerts: PriceAlertSetting[], record: { unitPrice: number; gasStation: string }) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      alerts.forEach((alert) => {
+        const title = '油价提醒'
+        const body = `${alert.gasStation || record.gasStation || '加油站'} 油价已降至 ${record.unitPrice.toFixed(2)} 元/L，低于您设定的 ${alert.threshold.toFixed(2)} 元/L 阈值`
+        
+        new Notification(title, {
+          body,
+          icon: '/favicon.svg',
+        })
+      })
+    }
+  }
 
   const previewCalc = useMemo(() => {
     const volume = parseFloat(form.volume) || 0
@@ -66,14 +99,25 @@ export default function Refuel() {
     e.preventDefault()
     if (!activeVehicleId) return
 
-    addRefuelRecord({
+    const newRecord = {
       vehicleId: activeVehicleId,
       date: form.date,
       volume: parseFloat(form.volume) || 0,
       unitPrice: parseFloat(form.unitPrice) || 0,
       totalCost: parseFloat(form.totalCost) || 0,
       mileage: parseFloat(form.mileage) || 0,
-    })
+      gasStation: form.gasStation,
+    }
+
+    addRefuelRecord(newRecord)
+
+    const alerts = checkPriceAlerts({ ...newRecord, id: '', consumption: 0, costPerKm: 0, isAnomaly: false, anomalyPercentage: 0 })
+    if (alerts.length > 0) {
+      setTriggeredAlerts(alerts)
+      setShowAlertToast(true)
+      sendPriceAlertNotification(alerts, newRecord)
+      setTimeout(() => setShowAlertToast(false), 5000)
+    }
 
     setShowModal(false)
     setForm(defaultForm)
@@ -158,6 +202,12 @@ export default function Refuel() {
                   </div>
                   <div className="flex-1 border-l border-zinc-800/50 py-4 pl-5 pr-4">
                     <div className="flex items-start justify-between">
+                      {record.gasStation && (
+                        <div className="mb-2 flex items-center gap-1.5">
+                          <Fuel className="h-3.5 w-3.5 text-amber-400/70" />
+                          <span className="text-xs font-medium text-zinc-400">{record.gasStation}</span>
+                        </div>
+                      )}
                       <div className="grid flex-1 grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
                         <div>
                           <p className="text-[10px] uppercase tracking-wider text-zinc-500">加油量</p>
@@ -282,6 +332,16 @@ export default function Refuel() {
                   required
                 />
               </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">加油站</label>
+                <input
+                  type="text"
+                  value={form.gasStation}
+                  onChange={(e) => setForm((f) => ({ ...f, gasStation: e.target.value }))}
+                  placeholder="如：中石油 朝阳路站"
+                  className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-zinc-400">加油量 (L)</label>
@@ -399,6 +459,46 @@ export default function Refuel() {
                 删除
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showAlertToast && triggeredAlerts.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-50 animate-bounce">
+          <div className="flex items-start gap-3 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4 shadow-lg backdrop-blur-sm">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/20 flex-shrink-0">
+              <Bell className="h-4 w-4 text-blue-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-blue-400">油价提醒</p>
+              <p className="mt-1 text-xs text-zinc-300">
+                {triggeredAlerts.length} 条油价提醒已触发
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">
+                油价低于您设定的阈值
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAlertToast(false)}
+              className="flex h-6 w-6 items-center justify-center rounded text-zinc-500 hover:text-zinc-300 flex-shrink-0"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {notificationPermission === 'default' && (
+        <div className="fixed bottom-6 left-6 z-40 hidden md:block">
+          <div className="flex items-center gap-3 rounded-xl border border-zinc-700/50 bg-zinc-900/90 px-4 py-3 shadow-lg backdrop-blur-sm">
+            <Bell className="h-4 w-4 text-zinc-500" />
+            <p className="text-xs text-zinc-400">开启油价提醒通知</p>
+            <button
+              onClick={requestNotificationPermission}
+              className="text-xs font-medium text-blue-400 hover:text-blue-300"
+            >
+              开启
+            </button>
           </div>
         </div>
       )}

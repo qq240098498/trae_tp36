@@ -22,6 +22,7 @@ export interface RefuelRecord {
   costPerKm: number
   isAnomaly: boolean
   anomalyPercentage: number
+  gasStation: string
 }
 
 export type MaintenanceItem =
@@ -64,4 +65,28 @@ export interface MaintenanceReminder {
   remainingKm?: number
   remainingDays?: number
   maintenanceId: string
+}
+
+export interface PriceAlertSetting {
+  id: string
+  gasStation: string
+  fuelType: FuelType
+  threshold: number
+  enabled: boolean
+  createdAt: number
+}
+
+export interface GasStationAvgPrice {
+  gasStation: string
+  avgPrice: number
+  recordCount: number
+  minPrice: number
+  maxPrice: number
+}
+
+export interface WeekdayPrice {
+  weekday: number
+  weekdayName: string
+  avgPrice: number
+  recordCount: number
 }
