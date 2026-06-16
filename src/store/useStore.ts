@@ -1,9 +1,55 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Vehicle, RefuelRecord, MaintenanceRecord, MaintenanceReminder, PriceAlertSetting, GasStationAvgPrice, WeekdayPrice } from '@/types'
+import type { Vehicle, RefuelRecord, MaintenanceRecord, MaintenanceReminder, PriceAlertSetting, GasStationAvgPrice, WeekdayPrice, GasStationLocation } from '@/types'
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
+
+function generateLocationKey(location: GasStationLocation): string {
+  const parts = [location.name?.trim() || '']
+  if (location.city) parts.push(location.city.trim())
+  if (location.district) parts.push(location.district.trim())
+  if (location.address) parts.push(location.address.trim())
+  return parts.join('|').toLowerCase()
+}
+
+function normalizeGasStation(input: string | GasStationLocation): GasStationLocation {
+  if (typeof input === 'string') {
+    return { name: input }
+  }
+  return {
+    name: input.name || '',
+    address: input.address,
+    city: input.city,
+    district: input.district,
+    latitude: input.latitude,
+    longitude: input.longitude,
+  }
+}
+
+function isLocationMatch(alertLocation: GasStationLocation, recordLocation: GasStationLocation): boolean {
+  if (!alertLocation.name && !alertLocation.city && !alertLocation.district && !alertLocation.address) {
+    return true
+  }
+  if (alertLocation.name && recordLocation.name && alertLocation.name.trim() !== recordLocation.name.trim()) {
+    return false
+  }
+  if (alertLocation.city && recordLocation.city && alertLocation.city.trim() !== recordLocation.city.trim()) {
+    return false
+  }
+  if (alertLocation.district && recordLocation.district && alertLocation.district.trim() !== recordLocation.district.trim()) {
+    return false
+  }
+  return true
+}
+
+function getLocationDisplay(location: GasStationLocation): string {
+  const parts = []
+  if (location.city) parts.push(location.city)
+  if (location.district) parts.push(location.district)
+  if (location.name) parts.push(location.name)
+  return parts.length > 0 ? parts.join(' · ') : '未知加油站'
 }
 
 function calculateAnomalies(records: RefuelRecord[]): RefuelRecord[] {
@@ -50,10 +96,13 @@ interface AppState {
   getMaintenanceRecordsForVehicle: (vehicleId: string) => MaintenanceRecord[]
   getCurrentMileage: (vehicleId: string) => number
   getMaintenanceReminders: () => MaintenanceReminder[]
-  getGasStationAvgPrices: (vehicleId?: string) => GasStationAvgPrice[]
+  getGasStationAvgPrices: (vehicleId?: string, groupBy?: 'station' | 'city' | 'district') => GasStationAvgPrice[]
   getWeekdayPrices: (vehicleId?: string) => WeekdayPrice[]
   getPriceAlerts: () => PriceAlertSetting[]
   checkPriceAlerts: (record: RefuelRecord) => PriceAlertSetting[]
+  getLocationDisplay: (location: GasStationLocation) => string
+  getDistricts: (vehicleId?: string) => string[]
+  getCities: (vehicleId?: string) => string[]
 }
 
 export const useStore = create<AppState>()(
@@ -120,8 +169,11 @@ export const useStore = create<AppState>()(
           costPerKm = record.totalCost / distance
         }
 
+        const normalizedGasStation = normalizeGasStation(record.gasStation)
+
         const newRecord: RefuelRecord = {
           ...record,
+          gasStation: normalizedGasStation,
           id: generateId(),
           consumption: Math.round(consumption * 100) / 100,
           costPerKm: Math.round(costPerKm * 100) / 100,
@@ -273,7 +325,7 @@ export const useStore = create<AppState>()(
         return reminders
       },
 
-      getGasStationAvgPrices: (vehicleId) => {
+      getGasStationAvgPrices: (vehicleId, groupBy = 'station') => {
         const state = get()
         let records = state.refuelRecords
         
@@ -281,24 +333,46 @@ export const useStore = create<AppState>()(
           records = records.filter((r) => r.vehicleId === vehicleId)
         }
 
-        records = records.filter((r) => r.gasStation && r.gasStation.trim() !== '')
+        records = records.filter((r) => {
+          const gs = normalizeGasStation(r.gasStation)
+          return gs.name && gs.name.trim() !== ''
+        })
 
-        const stationMap = new Map<string, { prices: number[]; count: number }>()
+        const stationMap = new Map<string, { location: GasStationLocation; prices: number[]; count: number }>()
 
         records.forEach((record) => {
-          const station = record.gasStation
-          if (!stationMap.has(station)) {
-            stationMap.set(station, { prices: [], count: 0 })
+          const location = normalizeGasStation(record.gasStation)
+          let key: string
+          let groupedLocation: GasStationLocation
+
+          if (groupBy === 'city') {
+            key = location.city?.trim() || '未知城市'
+            groupedLocation = { name: location.city || '未知城市', city: location.city }
+          } else if (groupBy === 'district') {
+            key = `${location.city?.trim() || ''}|${location.district?.trim() || '未知区域'}`
+            groupedLocation = { 
+              name: location.district || '未知区域', 
+              city: location.city, 
+              district: location.district 
+            }
+          } else {
+            key = generateLocationKey(location)
+            groupedLocation = location
           }
-          const data = stationMap.get(station)!
+
+          if (!stationMap.has(key)) {
+            stationMap.set(key, { location: groupedLocation, prices: [], count: 0 })
+          }
+          const data = stationMap.get(key)!
           data.prices.push(record.unitPrice)
           data.count++
         })
 
         const result: GasStationAvgPrice[] = []
-        stationMap.forEach((data, station) => {
+        stationMap.forEach((data, key) => {
           result.push({
-            gasStation: station,
+            gasStation: data.location,
+            locationKey: key,
             avgPrice: data.prices.reduce((a, b) => a + b, 0) / data.prices.length,
             recordCount: data.count,
             minPrice: Math.min(...data.prices),
@@ -354,16 +428,61 @@ export const useStore = create<AppState>()(
       checkPriceAlerts: (record) => {
         const state = get()
         const triggeredAlerts: PriceAlertSetting[] = []
+        const recordLocation = normalizeGasStation(record.gasStation)
 
         state.priceAlertSettings.forEach((alert) => {
           if (!alert.enabled) return
-          if (alert.gasStation && alert.gasStation !== record.gasStation) return
+          const alertLocation = normalizeGasStation(alert.location)
+          if (!isLocationMatch(alertLocation, recordLocation)) return
           if (record.unitPrice <= alert.threshold) {
             triggeredAlerts.push(alert)
           }
         })
 
         return triggeredAlerts
+      },
+
+      getLocationDisplay: (location) => {
+        return getLocationDisplay(normalizeGasStation(location))
+      },
+
+      getCities: (vehicleId) => {
+        const state = get()
+        let records = state.refuelRecords
+        
+        if (vehicleId) {
+          records = records.filter((r) => r.vehicleId === vehicleId)
+        }
+
+        const cities = new Set<string>()
+        records.forEach((record) => {
+          const location = normalizeGasStation(record.gasStation)
+          if (location.city && location.city.trim() !== '') {
+            cities.add(location.city.trim())
+          }
+        })
+
+        return Array.from(cities).sort()
+      },
+
+      getDistricts: (vehicleId) => {
+        const state = get()
+        let records = state.refuelRecords
+        
+        if (vehicleId) {
+          records = records.filter((r) => r.vehicleId === vehicleId)
+        }
+
+        const districts = new Set<string>()
+        records.forEach((record) => {
+          const location = normalizeGasStation(record.gasStation)
+          if (location.district && location.district.trim() !== '') {
+            const prefix = location.city ? `${location.city} · ` : ''
+            districts.add(prefix + location.district.trim())
+          }
+        })
+
+        return Array.from(districts).sort()
       },
     }),
     {

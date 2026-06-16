@@ -12,25 +12,69 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  MapPin,
+  Layers,
 } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import VehicleSelector from '@/components/VehicleSelector'
 import { cn } from '@/lib/utils'
-import type { PriceAlertSetting, FuelType } from '@/types'
+import type { PriceAlertSetting, FuelType, GasStationLocation } from '@/types'
+
+type GroupBy = 'station' | 'city' | 'district'
 
 interface AlertFormData {
-  gasStation: string
+  location: GasStationLocation
   fuelType: FuelType
   threshold: string
   enabled: boolean
 }
 
 const defaultAlertForm: AlertFormData = {
-  gasStation: '',
+  location: {
+    name: '',
+    city: '',
+    district: '',
+    address: '',
+  },
   fuelType: '汽油',
   threshold: '',
   enabled: true,
 }
+
+function getLocationDisplay(location: GasStationLocation, groupBy?: GroupBy): string {
+  if (groupBy === 'city') {
+    return location.city || location.name || '未知城市'
+  }
+  if (groupBy === 'district') {
+    const parts = []
+    if (location.city) parts.push(location.city)
+    if (location.district) parts.push(location.district)
+    if (parts.length === 0 && location.name) parts.push(location.name)
+    return parts.length > 0 ? parts.join(' · ') : '未知区域'
+  }
+  const parts = []
+  if (location.city) parts.push(location.city)
+  if (location.district) parts.push(location.district)
+  if (location.name) parts.push(location.name)
+  return parts.length > 0 ? parts.join(' · ') : '未填写加油站'
+}
+
+function getLocationSubtitle(location: GasStationLocation): string | null {
+  if (location.address) return location.address
+  if (location.name && (location.city || location.district)) {
+    const parts = []
+    if (location.city) parts.push(location.city)
+    if (location.district) parts.push(location.district)
+    return parts.join(' · ')
+  }
+  return null
+}
+
+const groupByOptions: { value: GroupBy; label: string; description: string }[] = [
+  { value: 'station', label: '按加油站', description: '按具体加油站统计' },
+  { value: 'district', label: '按区域', description: '按城市+区域统计' },
+  { value: 'city', label: '按城市', description: '按城市统计' },
+]
 
 export default function FuelSaving() {
   const {
@@ -50,13 +94,15 @@ export default function FuelSaving() {
   const [alertForm, setAlertForm] = useState<AlertFormData>(defaultAlertForm)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [showAllStations, setShowAllStations] = useState(false)
+  const [groupBy, setGroupBy] = useState<GroupBy>('station')
+  const [showAlertLocationDetails, setShowAlertLocationDetails] = useState(false)
 
   const stationPrices = useMemo(() => {
     if (activeVehicleId) {
-      return getGasStationAvgPrices(activeVehicleId)
+      return getGasStationAvgPrices(activeVehicleId, groupBy)
     }
-    return getGasStationAvgPrices()
-  }, [activeVehicleId, getGasStationAvgPrices])
+    return getGasStationAvgPrices(undefined, groupBy)
+  }, [activeVehicleId, getGasStationAvgPrices, groupBy])
 
   const weekdayPrices = useMemo(() => {
     if (activeVehicleId) {
@@ -79,7 +125,12 @@ export default function FuelSaving() {
     if (!alertForm.threshold) return
 
     addPriceAlert({
-      gasStation: alertForm.gasStation,
+      location: {
+        name: alertForm.location.name,
+        city: alertForm.location.city,
+        district: alertForm.location.district,
+        address: alertForm.location.address,
+      },
       fuelType: alertForm.fuelType,
       threshold: parseFloat(alertForm.threshold) || 0,
       enabled: alertForm.enabled,
@@ -87,6 +138,7 @@ export default function FuelSaving() {
 
     setShowAlertModal(false)
     setAlertForm(defaultAlertForm)
+    setShowAlertLocationDetails(false)
   }
 
   const toggleAlert = (id: string, enabled: boolean) => {
@@ -95,6 +147,7 @@ export default function FuelSaving() {
 
   const openAddAlert = () => {
     setAlertForm(defaultAlertForm)
+    setShowAlertLocationDetails(false)
     setShowAlertModal(true)
   }
 
@@ -131,11 +184,20 @@ export default function FuelSaving() {
               <TrendingDown className="h-6 w-6 text-emerald-400" />
             </div>
             <div className="flex-1">
-              <p className="text-xs font-medium uppercase tracking-wider text-emerald-400/80">最划算加油站</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-emerald-400/80">
+                {groupBy === 'city' ? '最划算城市' : groupBy === 'district' ? '最划算区域' : '最划算加油站'}
+              </p>
               {cheapestStation ? (
                 <>
-                  <p className="mt-1 text-lg font-bold text-zinc-100">{cheapestStation.gasStation}</p>
-                  <p className="mt-1 font-data text-2xl font-bold text-emerald-400">
+                  <p className="mt-1 text-lg font-bold text-zinc-100">
+                    {getLocationDisplay(cheapestStation.gasStation, groupBy)}
+                  </p>
+                  {getLocationSubtitle(cheapestStation.gasStation) && groupBy === 'station' && (
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {getLocationSubtitle(cheapestStation.gasStation)}
+                    </p>
+                  )}
+                  <p className="mt-2 font-data text-2xl font-bold text-emerald-400">
                     {cheapestStation.avgPrice.toFixed(2)}
                     <span className="ml-1 text-sm text-zinc-500">元/L</span>
                   </p>
@@ -144,7 +206,7 @@ export default function FuelSaving() {
                   </p>
                 </>
               ) : (
-                <p className="mt-2 text-sm text-zinc-500">暂无加油站数据</p>
+                <p className="mt-2 text-sm text-zinc-500">暂无数据</p>
               )}
             </div>
           </div>
@@ -160,7 +222,7 @@ export default function FuelSaving() {
               {cheapestWeekday ? (
                 <>
                   <p className="mt-1 text-lg font-bold text-zinc-100">{cheapestWeekday.weekdayName}</p>
-                  <p className="mt-1 font-data text-2xl font-bold text-amber-400">
+                  <p className="mt-2 font-data text-2xl font-bold text-amber-400">
                     {cheapestWeekday.avgPrice.toFixed(2)}
                     <span className="ml-1 text-sm text-zinc-500">元/L</span>
                   </p>
@@ -177,9 +239,32 @@ export default function FuelSaving() {
       </div>
 
       <div className="mb-6 rounded-2xl border border-zinc-800/50 bg-zinc-900/50 p-5">
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-zinc-200">加油站均价排行</h3>
-          <span className="text-xs text-zinc-500">按均价从低到高</span>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-200">均价排行</h3>
+            <p className="text-xs text-zinc-500">按均价从低到高排序</p>
+          </div>
+          <div className="flex items-center gap-2 rounded-xl border border-zinc-700/30 bg-zinc-800/30 p-1">
+            {groupByOptions.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setGroupBy(opt.value)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                  groupBy === opt.value
+                    ? 'bg-amber-500/15 text-amber-400'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                )}
+              >
+                {opt.value === 'station' ? (
+                  <MapPin className="h-3.5 w-3.5" />
+                ) : (
+                  <Layers className="h-3.5 w-3.5" />
+                )}
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {stationPrices.length === 0 ? (
@@ -190,43 +275,49 @@ export default function FuelSaving() {
           </div>
         ) : (
           <div className="space-y-2">
-            {displayedStations.map((station, index) => (
-              <div
-                key={station.gasStation}
-                className={cn(
-                  'flex items-center gap-4 rounded-xl px-4 py-3 transition-colors',
-                  index === 0
-                    ? 'bg-emerald-500/10 border border-emerald-500/20'
-                    : 'bg-zinc-800/30 border border-zinc-800/50'
-                )}
-              >
+            {displayedStations.map((station, index) => {
+              const subtitle = getLocationSubtitle(station.gasStation)
+              return (
                 <div
+                  key={station.locationKey}
                   className={cn(
-                    'flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold',
+                    'flex items-center gap-4 rounded-xl px-4 py-3 transition-colors',
                     index === 0
-                      ? 'bg-emerald-500/20 text-emerald-400'
-                      : 'bg-zinc-700/50 text-zinc-400'
+                      ? 'bg-emerald-500/10 border border-emerald-500/20'
+                      : 'bg-zinc-800/30 border border-zinc-800/50'
                   )}
                 >
-                  {index + 1}
+                  <div
+                    className={cn(
+                      'flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold flex-shrink-0',
+                      index === 0
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-zinc-700/50 text-zinc-400'
+                    )}
+                  >
+                    {index + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate text-sm font-medium text-zinc-200">
+                      {getLocationDisplay(station.gasStation, groupBy)}
+                    </p>
+                    <p className="truncate text-xs text-zinc-500">
+                      {subtitle && groupBy === 'station' ? `${subtitle} · ` : ''}
+                      {station.recordCount} 条记录 · {station.minPrice.toFixed(2)} - {station.maxPrice.toFixed(2)} 元
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className={cn(
+                      'font-data text-lg font-bold',
+                      index === 0 ? 'text-emerald-400' : 'text-zinc-300'
+                    )}>
+                      {station.avgPrice.toFixed(2)}
+                      <span className="ml-1 text-xs text-zinc-500">元/L</span>
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate text-sm font-medium text-zinc-200">{station.gasStation}</p>
-                  <p className="text-xs text-zinc-500">
-                    {station.recordCount} 条记录 · {station.minPrice.toFixed(2)} - {station.maxPrice.toFixed(2)} 元
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className={cn(
-                    'font-data text-lg font-bold',
-                    index === 0 ? 'text-emerald-400' : 'text-zinc-300'
-                  )}>
-                    {station.avgPrice.toFixed(2)}
-                    <span className="ml-1 text-xs text-zinc-500">元/L</span>
-                  </p>
-                </div>
-              </div>
-            ))}
+              )
+            })}
 
             {stationPrices.length > 5 && (
               <button
@@ -308,7 +399,7 @@ export default function FuelSaving() {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-zinc-200">油价提醒</h3>
-              <p className="text-xs text-zinc-500">油价低于设定阈值时推送通知</p>
+              <p className="text-xs text-zinc-500">可按城市/区域/加油站设置提醒阈值</p>
             </div>
           </div>
           <button
@@ -334,16 +425,16 @@ export default function FuelSaving() {
                 className="flex items-center gap-4 rounded-xl border border-zinc-800/50 bg-zinc-800/30 px-4 py-3"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-zinc-200">
-                    {alert.gasStation || '全部加油站'}
+                  <p className="truncate text-sm font-medium text-zinc-200">
+                    {getLocationDisplay(alert.location)}
                   </p>
-                  <p className="text-xs text-zinc-500">
+                  <p className="truncate text-xs text-zinc-500">
                     {alert.fuelType} · 低于 {alert.threshold.toFixed(2)} 元/L 时提醒
                   </p>
                 </div>
                 <button
                   onClick={() => toggleAlert(alert.id, !alert.enabled)}
-                  className="text-zinc-400 transition-colors hover:text-zinc-200"
+                  className="text-zinc-400 transition-colors hover:text-zinc-200 flex-shrink-0"
                 >
                   {alert.enabled ? (
                     <ToggleRight className="h-6 w-6 text-blue-400" />
@@ -353,7 +444,7 @@ export default function FuelSaving() {
                 </button>
                 <button
                   onClick={() => setDeleteConfirmId(alert.id)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400 flex-shrink-0"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -365,7 +456,7 @@ export default function FuelSaving() {
 
       {showAlertModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-md rounded-2xl border border-zinc-800 bg-[#1a1a2e] p-6">
+          <div className="mx-4 w-full max-w-md rounded-2xl border border-zinc-800 bg-[#1a1a2e] p-6 max-h-[90vh] overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-zinc-100">添加油价提醒</h3>
               <button
@@ -378,15 +469,58 @@ export default function FuelSaving() {
 
             <form onSubmit={handleAddAlert} className="space-y-4">
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-400">加油站（可选）</label>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">加油站名称（可选）</label>
                 <input
                   type="text"
-                  value={alertForm.gasStation}
-                  onChange={(e) => setAlertForm((f) => ({ ...f, gasStation: e.target.value }))}
+                  value={alertForm.location.name}
+                  onChange={(e) => setAlertForm((f) => ({ ...f, location: { ...f.location, name: e.target.value } }))}
                   placeholder="留空则监控全部加油站"
                   className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20"
                 />
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAlertLocationDetails(!showAlertLocationDetails)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-700/30 bg-zinc-800/30 px-3.5 py-2.5 text-xs text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300"
+              >
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {showAlertLocationDetails ? '收起位置筛选' : '展开位置筛选（城市/区域）'}
+                </span>
+                {showAlertLocationDetails ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
+
+              {showAlertLocationDetails && (
+                <div className="space-y-4 rounded-xl border border-zinc-700/30 bg-zinc-800/20 p-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-zinc-400">城市</label>
+                      <input
+                        type="text"
+                        value={alertForm.location.city || ''}
+                        onChange={(e) => setAlertForm((f) => ({ ...f, location: { ...f.location, city: e.target.value } }))}
+                        placeholder="如：北京市"
+                        className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-zinc-400">区/县</label>
+                      <input
+                        type="text"
+                        value={alertForm.location.district || ''}
+                        onChange={(e) => setAlertForm((f) => ({ ...f, location: { ...f.location, district: e.target.value } }))}
+                        placeholder="如：朝阳区"
+                        className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="mb-1.5 block text-xs font-medium text-zinc-400">燃油类型</label>

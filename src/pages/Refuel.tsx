@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react'
-import { X, Plus, Trash2, Fuel, AlertTriangle, Gauge, DollarSign, Car, Bell } from 'lucide-react'
+import { X, Plus, Trash2, Fuel, AlertTriangle, Gauge, DollarSign, Car, Bell, MapPin, ChevronDown, ChevronUp } from 'lucide-react'
 import { useStore } from '@/store/useStore'
 import VehicleSelector from '@/components/VehicleSelector'
 import { cn } from '@/lib/utils'
-import type { PriceAlertSetting } from '@/types'
+import type { PriceAlertSetting, GasStationLocation } from '@/types'
 
 interface RefuelFormData {
   date: string
@@ -11,7 +11,12 @@ interface RefuelFormData {
   unitPrice: string
   totalCost: string
   mileage: string
-  gasStation: string
+  gasStation: {
+    name: string
+    address?: string
+    city?: string
+    district?: string
+  }
 }
 
 const defaultForm: RefuelFormData = {
@@ -20,7 +25,31 @@ const defaultForm: RefuelFormData = {
   unitPrice: '',
   totalCost: '',
   mileage: '',
-  gasStation: '',
+  gasStation: {
+    name: '',
+    address: '',
+    city: '',
+    district: '',
+  },
+}
+
+function getGasStationDisplay(location: GasStationLocation): string {
+  const parts = []
+  if (location.city) parts.push(location.city)
+  if (location.district) parts.push(location.district)
+  if (location.name) parts.push(location.name)
+  return parts.length > 0 ? parts.join(' · ') : '未填写加油站'
+}
+
+function getGasStationSubtitle(location: GasStationLocation): string | null {
+  if (location.address) return location.address
+  if (location.city || location.district) {
+    const parts = []
+    if (location.city) parts.push(location.city)
+    if (location.district) parts.push(location.district)
+    return parts.join(' · ')
+  }
+  return null
 }
 
 export default function Refuel() {
@@ -33,6 +62,7 @@ export default function Refuel() {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
   const [triggeredAlerts, setTriggeredAlerts] = useState<PriceAlertSetting[]>([])
   const [showAlertToast, setShowAlertToast] = useState(false)
+  const [showLocationDetails, setShowLocationDetails] = useState(false)
 
   const prevMileage = useMemo(() => {
     if (!activeVehicleId) return 0
@@ -53,11 +83,13 @@ export default function Refuel() {
     }
   }
 
-  const sendPriceAlertNotification = (alerts: PriceAlertSetting[], record: { unitPrice: number; gasStation: string }) => {
+  const sendPriceAlertNotification = (alerts: PriceAlertSetting[], record: { unitPrice: number; gasStation: GasStationLocation }) => {
     if ('Notification' in window && Notification.permission === 'granted') {
       alerts.forEach((alert) => {
         const title = '油价提醒'
-        const body = `${alert.gasStation || record.gasStation || '加油站'} 油价已降至 ${record.unitPrice.toFixed(2)} 元/L，低于您设定的 ${alert.threshold.toFixed(2)} 元/L 阈值`
+        const alertLocation = alert.location
+        const locationDisplay = getGasStationDisplay(alertLocation.name ? alertLocation : record.gasStation)
+        const body = `${locationDisplay} 油价已降至 ${record.unitPrice.toFixed(2)} 元/L，低于您设定的 ${alert.threshold.toFixed(2)} 元/L 阈值`
         
         new Notification(title, {
           body,
@@ -106,7 +138,12 @@ export default function Refuel() {
       unitPrice: parseFloat(form.unitPrice) || 0,
       totalCost: parseFloat(form.totalCost) || 0,
       mileage: parseFloat(form.mileage) || 0,
-      gasStation: form.gasStation,
+      gasStation: {
+        name: form.gasStation.name,
+        address: form.gasStation.address,
+        city: form.gasStation.city,
+        district: form.gasStation.district,
+      },
     }
 
     addRefuelRecord(newRecord)
@@ -121,6 +158,7 @@ export default function Refuel() {
 
     setShowModal(false)
     setForm(defaultForm)
+    setShowLocationDetails(false)
   }
 
   const openAdd = () => {
@@ -202,10 +240,19 @@ export default function Refuel() {
                   </div>
                   <div className="flex-1 border-l border-zinc-800/50 py-4 pl-5 pr-4">
                     <div className="flex items-start justify-between">
-                      {record.gasStation && (
-                        <div className="mb-2 flex items-center gap-1.5">
-                          <Fuel className="h-3.5 w-3.5 text-amber-400/70" />
-                          <span className="text-xs font-medium text-zinc-400">{record.gasStation}</span>
+                      {(record.gasStation?.name || record.gasStation?.city || record.gasStation?.district || record.gasStation?.address) && (
+                        <div className="mb-2">
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="h-3.5 w-3.5 text-amber-400/70" />
+                            <span className="text-xs font-medium text-zinc-300">
+                              {getGasStationDisplay(record.gasStation)}
+                            </span>
+                          </div>
+                          {getGasStationSubtitle(record.gasStation) && (
+                            <p className="mt-1 ml-5 text-[10px] text-zinc-500">
+                              {getGasStationSubtitle(record.gasStation)}
+                            </p>
+                          )}
                         </div>
                       )}
                       <div className="grid flex-1 grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-4">
@@ -333,15 +380,68 @@ export default function Refuel() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-400">加油站</label>
+                <label className="mb-1.5 block text-xs font-medium text-zinc-400">加油站名称</label>
                 <input
                   type="text"
-                  value={form.gasStation}
-                  onChange={(e) => setForm((f) => ({ ...f, gasStation: e.target.value }))}
+                  value={form.gasStation.name}
+                  onChange={(e) => setForm((f) => ({ ...f, gasStation: { ...f.gasStation, name: e.target.value } }))}
                   placeholder="如：中石油 朝阳路站"
                   className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20"
                 />
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowLocationDetails(!showLocationDetails)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-700/30 bg-zinc-800/30 px-3.5 py-2.5 text-xs text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300"
+              >
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" />
+                  {showLocationDetails ? '收起位置详情' : '展开位置详情（城市/区域/地址）'}
+                </span>
+                {showLocationDetails ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
+
+              {showLocationDetails && (
+                <div className="space-y-4 rounded-xl border border-zinc-700/30 bg-zinc-800/20 p-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-zinc-400">城市</label>
+                      <input
+                        type="text"
+                        value={form.gasStation.city || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, gasStation: { ...f.gasStation, city: e.target.value } }))}
+                        placeholder="如：北京市"
+                        className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-zinc-400">区/县</label>
+                      <input
+                        type="text"
+                        value={form.gasStation.district || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, gasStation: { ...f.gasStation, district: e.target.value } }))}
+                        placeholder="如：朝阳区"
+                        className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-zinc-400">详细地址</label>
+                    <input
+                      type="text"
+                      value={form.gasStation.address || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, gasStation: { ...f.gasStation, address: e.target.value } }))}
+                      placeholder="如：朝阳路123号"
+                      className="w-full rounded-lg border border-zinc-700/50 bg-zinc-800/50 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/20"
+                    />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-zinc-400">加油量 (L)</label>

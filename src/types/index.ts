@@ -10,6 +10,15 @@ export interface Vehicle {
   createdAt: number
 }
 
+export interface GasStationLocation {
+  name: string
+  address?: string
+  city?: string
+  district?: string
+  latitude?: number
+  longitude?: number
+}
+
 export interface RefuelRecord {
   id: string
   vehicleId: string
@@ -22,7 +31,7 @@ export interface RefuelRecord {
   costPerKm: number
   isAnomaly: boolean
   anomalyPercentage: number
-  gasStation: string
+  gasStation: GasStationLocation
 }
 
 export type MaintenanceItem =
@@ -69,7 +78,7 @@ export interface MaintenanceReminder {
 
 export interface PriceAlertSetting {
   id: string
-  gasStation: string
+  location: GasStationLocation
   fuelType: FuelType
   threshold: number
   enabled: boolean
@@ -77,7 +86,8 @@ export interface PriceAlertSetting {
 }
 
 export interface GasStationAvgPrice {
-  gasStation: string
+  gasStation: GasStationLocation
+  locationKey: string
   avgPrice: number
   recordCount: number
   minPrice: number
